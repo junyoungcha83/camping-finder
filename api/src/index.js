@@ -3,6 +3,7 @@
 //  POST /api/times   { origin:{lng,lat}, when:'YYYYMMDDHHmm', dests:[{id,lng,lat}, ..최대 30] }
 //                    → { when, times:{ id:{min,km} | null }, cached, called }
 //                    카카오모빌리티 '미래 운행 정보 길찾기'(/v1/future/directions) — 출발 시각 기준 예측 소요시간.
+//  GET  /api/gocamping?op=basedList&pageNo=&numOfRows=   고캠핑 원문 프록시(데이터 파일 만들 때만, GOCAMPING_KEY 시크릿)
 //  GET  /api/health
 //
 // Secrets:  KAKAO_REST_KEY (카카오 개발자 REST API 키 — 주유비교앱과 같은 키)
@@ -77,6 +78,21 @@ async function times(req, env, c) {
   return json({ when, times: out, cached, called, failed }, 200, c);
 }
 
+// 고캠핑 목록 원문 한 페이지 — 앱이 직접 부르지 않고, tools/ 에서 데이터 파일을 만들 때만 쓴다.
+// 키를 서버에만 두려고 프록시한다. 키가 Encoding(%2B 등) 이든 Decoding 이든 받도록 한 번 풀어서 다시 인코딩.
+async function gocamping(url, env, c) {
+  if (!env.GOCAMPING_KEY) return json({ error: 'no_gocamping_key' }, 500, c);
+  const op = url.searchParams.get('op') || 'basedList';
+  if (!['basedList', 'imageList'].includes(op)) return json({ error: 'bad_op' }, 400, c);
+  let key = env.GOCAMPING_KEY.trim();
+  try { if (/%[0-9A-Fa-f]{2}/.test(key)) key = decodeURIComponent(key); } catch {}
+  const q = new URLSearchParams({ MobileOS: 'ETC', MobileApp: 'camping-finder', _type: 'json' });
+  for (const k of ['pageNo', 'numOfRows', 'contentId']) if (url.searchParams.get(k)) q.set(k, url.searchParams.get(k));
+  const r = await fetch(`https://apis.data.go.kr/B551011/GoCamping/${op}?serviceKey=${encodeURIComponent(key)}&${q}`);
+  const text = await r.text();
+  return new Response(text, { status: r.status, headers: { 'Content-Type': r.headers.get('Content-Type') || 'text/plain', 'Cache-Control': 'no-store', ...c } });
+}
+
 export default {
   async fetch(req, env) {
     const c = cors(req);
@@ -87,6 +103,7 @@ export default {
         return json({ ok: true, kakao: !!env.KAKAO_REST_KEY, kv: !!env.CACHE, auth: env.APP_TOKEN ? 'on' : 'missing' }, 200, c);
       if (!authed(req, env)) return json({ error: 'unauthorized' }, 401, c);
       if (url.pathname === '/api/times' && req.method === 'POST') return await times(req, env, c);
+      if (url.pathname === '/api/gocamping' && req.method === 'GET') return await gocamping(url, env, c);
       return json({ error: 'not_found' }, 404, c);
     } catch (e) {
       return json({ error: 'server', detail: String(e).slice(0, 200) }, 500, c);

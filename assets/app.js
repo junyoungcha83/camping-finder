@@ -1,7 +1,8 @@
 'use strict';
 /* 캠핑장 찾기
  *
- * 데이터: data/camps.json — 공공데이터포털 15037499 「한국관광공사 전국 야영장 등록 현황」 + 카카오 주소검색 좌표.
+ * 데이터: data/camps.json — 공공데이터 「전국 야영장 등록 현황」 + 고캠핑 정보(연락처·사진·입지) 합본, tools/build.mjs.
+ *         data/detail.json — 소개글 등 상세 화면 전용(처음 열 때 받음).
  * 이동시간: ① 직선거리 추정식(아래 MODEL) 으로 후보를 고르고
  *           ② 화면에 보이는 곳부터 camping-api(카카오 미래 운행 길찾기)로 실제 예측 소요시간을 받아 바꾼다.
  * 날씨: Open-Meteo (키 없음) — 출발일(금/토) 하루 예보.
@@ -16,8 +17,14 @@ const MODEL = { fri: { a: 34.9, b: 0.883 }, sat: { a: 37.8, b: 0.915 } };
 const CAND_RATIO = 0.8; // 추정 × 0.8 이 제한 이내면 후보 — 실제가 추정보다 빠른 곳(하위 10% ≈ 0.84)을 놓치지 않게
 
 const SLOTS = { fri: { day: 5, h: 15, label: '금' }, sat: { day: 6, h: 10, label: '토' } };
-const TYPES = ['일반야영장', '오토캠핑', '글램핑', '카라반', '개인카라반 사이트'];
-const TYPE_SHORT = ['일반', '오토', '글램핑', '카라반', '개인카라반'];
+// c.t: 면수(0 없음, -1 있음·면수 모름). 6번은 c.t 가 아니라 c.bq(이름·소개글에 바베큐 언급)
+const TYPES = ['일반야영장', '오토캠핑', '글램핑', '카라반', '개인카라반 사이트', '캠프닉', '바베큐(소개에 언급)'];
+const TYPE_SHORT = ['일반', '오토', '글램핑', '카라반', '개인카라반', '캠프닉', '바베큐'];
+const TODAY = ymdNow();
+function ymdNow() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
+const closed = (c) => !!c.cl && !(c.ce && c.ce < TODAY); // 휴장 기간이 지났으면 휴장 아님
+const hasType = (c, i) => i === 6 ? !!c.bq : c.t[i] !== 0;
+const typeList = (c) => TYPES.map((_, i) => i).filter((i) => hasType(c, i));
 const PETS = ['반려동물 불가', '소형견 가능', '반려동물 가능'];
 const PAGE = 40;
 
@@ -28,7 +35,7 @@ const nice = (s) => s.replace('마트.편의점', '마트·편의점').replace('
 /* ───────────── 상태 ───────────── */
 const DEF = {
   origin: null, saved: [], slot: 'fri', limit: 120, sort: 'time', view: 'card', tab: 'map', token: '',
-  f: { types: [], fac: [], env: [], pet: 0, sido: [] }, favs: {},
+  f: { types: [], fac: [], env: [], lct: [], pet: 0, sido: [], braz: false, open: false }, favs: {},
 };
 let S = load();
 function load() {
@@ -94,7 +101,10 @@ function envOf(c) {
 }
 function passFilters(c) {
   const f = S.f;
-  if (f.types.length && !f.types.some((i) => c.t[i] > 0)) return false;
+  if (f.types.length && !f.types.some((i) => hasType(c, i))) return false;
+  if (f.braz && c.br !== 0) return false;
+  if (f.lct.length && !f.lct.some((i) => c.l?.includes(i))) return false;
+  if (f.open && closed(c)) return false;
   if (f.fac.length && !f.fac.every((i) => c.f.includes(i))) return false;
   if (f.env.length && !f.env.some((l) => envOf(c).has(l))) return false;
   if (f.pet === 1 && !(c.p >= 1)) return false;
@@ -102,7 +112,7 @@ function passFilters(c) {
   if (f.sido.length && !f.sido.includes(c.s)) return false;
   return true;
 }
-function filterCount() { const f = S.f; return f.types.length + f.fac.length + f.env.length + (f.pet ? 1 : 0) + f.sido.length; }
+function filterCount() { const f = S.f; return f.types.length + f.fac.length + f.env.length + f.lct.length + (f.pet ? 1 : 0) + f.sido.length + (f.braz ? 1 : 0) + (f.open ? 1 : 0); }
 
 // 지금 화면 기준 결과: [{c, t}] — 즐겨찾기 탭은 거리·필터를 무시하고 즐겨찾기 전부
 function results() {
@@ -200,7 +210,8 @@ function wxText(c) {
 const clean = (s) => s.replace(/[,/]/g, ' ');
 const kakaoMap = (c) => `https://map.kakao.com/link/map/${encodeURIComponent(clean(c.n))},${c.y},${c.x}`;
 const kakaoTo = (c) => `https://map.kakao.com/link/to/${encodeURIComponent(clean(c.n))},${c.y},${c.x}`;
-const goCamping = (c) => `https://www.gocamping.or.kr/bsite/camp/info/list.do?searchKrwd=${encodeURIComponent(c.n)}`;
+const goCamping = (c) => c.ci ? `https://www.gocamping.or.kr/bsite/camp/info/read.do?c_no=${c.ci}`
+  : `https://www.gocamping.or.kr/bsite/camp/info/list.do?searchKrwd=${encodeURIComponent(c.n)}`;
 const naver = (c) => `https://search.naver.com/search.naver?query=${encodeURIComponent(c.n + ' ' + c.g)}`;
 async function copy(text) {
   try { await navigator.clipboard.writeText(text); }
@@ -226,22 +237,24 @@ function distHTML(t) {
   return `<span class="dist">${Math.round(t.km)}km <small>${t.real ? '도로' : '직선'}</small></span>`;
 }
 function typeTags(c) {
-  const t = c.t.map((n, i) => n > 0 ? `<span class="tag t">${TYPE_SHORT[i]}</span>` : '').join('');
+  const t = typeList(c).map((i) => `<span class="tag t">${TYPE_SHORT[i]}</span>`).join('');
   return (t || '<span class="tag">유형 미기재</span>') +
-    (c.p != null ? `<span class="tag p">${c.p === 0 ? '🐾✕' : c.p === 1 ? '🐾소형견' : '🐾가능'}</span>` : '');
+    (c.p != null ? `<span class="tag p">${c.p === 0 ? '🐾✕' : c.p === 1 ? '🐾소형견' : '🐾가능'}</span>` : '') +
+    (c.br === 0 ? '<span class="tag">🔥화로대</span>' : '') + (closed(c) ? '<span class="tag x">휴장</span>' : '');
 }
 function actsHTML(c) {
   return `<div class="acts">
     <button data-copy="${c.id}">📋 주소복사</button>
     <a href="${kakaoMap(c)}" target="_blank" rel="noopener">🗺️ 지도</a>
     <a href="${kakaoTo(c)}" target="_blank" rel="noopener">🧭 길찾기</a>
-    <a href="${goCamping(c)}" target="_blank" rel="noopener">⛺ 고캠핑</a>
+    ${c.rv ? `<a href="${esc(c.rv)}" target="_blank" rel="noopener">📅 예약</a>` : c.hp ? `<a href="${esc(c.hp)}" target="_blank" rel="noopener">🏠 홈페이지</a>` : `<a href="${goCamping(c)}" target="_blank" rel="noopener">⛺ 고캠핑</a>`}
   </div>`;
 }
 function cardHTML({ c, t }) {
   return `<div class="card">
     <div class="card-h"><button class="nm" data-open="${c.id}">${esc(c.n)}</button><button class="star${isFav(c) ? ' on' : ''}" data-fav="${c.id}" aria-label="즐겨찾기">★</button></div>
     <div class="rg">${esc(c.s)} ${esc(c.g)}${c.ap ? ' · <span class="warn">위치 대략</span>' : ''}</div>
+    ${c.li ? `<div class="li">${esc(c.li)}</div>` : ''}
     <div class="facts">${timeHTML(t)}${distHTML(t)}<span class="wx">${wxText(c)}</span></div>
     <div class="tags">${typeTags(c)}</div>
     ${actsHTML(c)}
@@ -254,7 +267,7 @@ function tableHTML(list) {
     <td>${esc(c.s.replace(/(특별자치도|특별자치시|특별시|광역시|통합특별시|도)$/, ''))} ${esc(c.g)}</td>
     <td>${t ? timeHTML(t) : '-'}</td><td>${t ? distHTML(t) : '-'}</td>
     <td>${wxText(c)}</td>
-    <td>${c.t.map((n, i) => n > 0 ? TYPE_SHORT[i] : '').filter(Boolean).join('·')}</td>
+    <td>${typeList(c).map((i) => TYPE_SHORT[i]).join('·')}${closed(c) ? ' <span class="warn">휴장</span>' : ''}</td>
     <td>${c.p == null ? '-' : ['✕', '소형견', '가능'][c.p]}</td>
     <td><button class="mini" data-copy="${c.id}">복사</button></td>
   </tr>`).join('');
@@ -386,35 +399,62 @@ $('sheetClose').onclick = () => closeSheet();
 document.querySelector('.sheet-bg').onclick = () => closeSheet();
 
 /* 캠핑장 상세 */
+let DETAIL = null, detailP = null;
+function loadDetail() {
+  if (!detailP) detailP = fetch('data/detail.json').then((r) => r.json()).then((j) => { DETAIL = j; }).catch(() => { detailP = null; });
+  return detailP;
+}
 function openCamp(id) {
   const c = CAMPS[id];
   const paint = () => {
     const t = trip(c), o = S.slot === 'fri' ? 'sat' : 'fri', t2 = trip(c, o);
     const sizes = (c.z || []).map(([w, h, q]) => `${w}×${h}m${q ? ` ${q}면` : ''}`).join(', ');
     const env = [...envOf(c)];
+    const D = DETAIL?.[c.id] || {};
+    const link = (u, label) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(label)}</a>` : '';
+    const row = (k, v) => v ? `<dt>${k}</dt><dd>${v}</dd>` : '';
+    const typesTxt = typeList(c).filter((i) => i < 6).map((i) => c.t[i] > 0 ? `${TYPES[i]} ${c.t[i]}면` : TYPES[i]).join(', ');
     const html = `
-      <div class="sec"><div class="rg">${esc(c.s)} ${esc(c.g)}</div>
+      ${c.img ? `<img class="hero" src="${esc(c.img)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ''}
+      <div class="sec"><div class="rg">${esc(c.s)} ${esc(c.g)}${closed(c) ? ' · <span class="warn">휴장 중</span>' : ''}</div>
+        ${c.li ? `<div class="li">${esc(c.li)}</div>` : ''}
         <div class="facts">${timeHTML(t)}${distHTML(t)}<span class="wx">${wxText(c)}</span></div>
         ${t2 ? `<div class="rg">${SLOTS[o].label} ${pad(SLOTS[o].h)}:00 출발이면 ${t2.none ? '길찾기 결과 없음' : (t2.real ? '' : '~') + fmtMin(t2.min) + (t2.real ? ' (예측)' : ' (추정)')}</div>` : ''}
         <div class="acts" style="margin-top:.4rem"><button class="star${isFav(c) ? ' on' : ''}" data-fav="${c.id}" style="flex:none;font-size:1.1rem">★ 즐겨찾기</button></div>
       </div>
       <dl class="info">
         <dt>주소</dt><dd class="addr-row"><span>${esc(c.a) || '-'}${c.ap ? ' <span class="warn">(지도 위치는 읍·면 단위 대략)</span>' : ''}</span><button class="mini" data-copy="${c.id}">복사</button></dd>
-        <dt>유형</dt><dd>${c.t.map((n, i) => n > 0 ? `${TYPES[i]} ${n}면` : '').filter(Boolean).join(', ') || '등록 자료에 미기재'}</dd>
-        <dt>사이트 크기</dt><dd>${sizes || '-'}</dd>
-        <dt>부대시설</dt><dd>${c.f.map((i) => nice(META.fac[i])).join(', ') || '-'}</dd>
+        ${row('전화', c.tel ? `${esc(c.tel)} <a class="mini" href="tel:${esc(c.tel.replace(/[^0-9+]/g, ''))}">전화</a>` : '')}
+        ${row('예약', c.rv || c.rc ? [esc(c.rc || ''), link(c.rv, '예약 페이지 ›')].filter(Boolean).join(' · ') : '')}
+        ${row('홈페이지', link(c.hp, c.hp?.replace(/^https?:\/\//, '')))}
+        <dt>유형</dt><dd>${typesTxt || '자료에 미기재'}${c.bq ? ' · 🍖바베큐 언급' : ''}</dd>
+        ${row('운영', [c.op, c.od].filter(Boolean).map(esc).join(' · ') + (D.hvof ? ` · 휴장 ${esc(D.hvof)}${c.cl && !closed(c) ? ' (기간 지남 — 고캠핑에 휴장으로 남아 있음)' : ''}` : ''))}
+        ${row('입지', (c.l || []).map((i) => META.lct[i]).join(', '))}
+        ${row('사이트 크기', sizes)}
+        ${row('화로대', c.br != null ? META.braz[c.br] : '')}
+        <dt>부대시설</dt><dd>${c.f.map((i) => nice(META.fac[i])).join(', ') || '-'}${D.etc ? ` · ${esc(D.etc)}` : ''}</dd>
+        ${row('편의', [D.wc && `화장실 ${D.wc}`, D.sw && `샤워실 ${D.sw}`, D.wt && `개수대 ${D.wt}`].filter(Boolean).join(' · '))}
+        ${row('장비 대여', esc(D.lend || ''))}
+        ${row('글램핑 내부', esc(D.glamp || ''))}
+        ${row('카라반 내부', esc(D.carav || ''))}
+        ${row('동반', [D.trl && '개인 트레일러', D.crv && '개인 카라반'].filter(Boolean).join(', ') + (D.trl || D.crv ? ' 입장 가능' : ''))}
         <dt>환경·주변</dt><dd>${env.join(', ') || '-'}</dd>
         <dt>반려동물</dt><dd>${c.p == null ? '정보 없음' : PETS[c.p]}</dd>
-        <dt>등록일</dt><dd>${esc(c.d || '-')}</dd>
+        ${row('등록 이름', esc(c.rn || ''))}
+        ${row('인허가일', esc(c.d || ''))}
       </dl>
+      ${D.feat ? `<div class="sec"><h4>특징</h4><p class="txt">${esc(D.feat)}</p></div>` : ''}
+      ${D.intro ? `<div class="sec"><h4>소개</h4><p class="txt">${esc(D.intro)}</p></div>` : ''}
+      ${D.tip ? `<div class="sec"><h4>알아둘 점</h4><p class="txt">${esc(D.tip)}</p></div>` : ''}
+      ${D.dir ? `<div class="sec"><h4>오시는 길</h4><p class="txt">${esc(D.dir)}</p></div>` : ''}
       ${actsHTML(c)}
-      <div class="acts"><a href="${naver(c)}" target="_blank" rel="noopener">🔎 네이버 검색 (홈페이지·예약·전화)</a></div>
-      <p class="sec note">홈페이지·예약·전화번호는 공공데이터에 없어서 고캠핑·네이버 검색으로 연결합니다. 등록 현황 기준이라 실제 운영 여부는 예약 전에 확인하세요.</p>`;
+      <div class="acts">${link(goCamping(c), '⛺ 고캠핑')}<a href="${naver(c)}" target="_blank" rel="noopener">🔎 네이버 검색</a></div>
+      <p class="sec note">${c.ci ? `고캠핑 정보${D.mod ? `(${esc(D.mod)} 수정)` : ''}와 공공데이터 등록 현황을 합친 내용입니다.` : '고캠핑에 없는 곳이라 등록 현황 정보만 있습니다.'} 운영 여부·요금은 예약 전에 확인하세요.</p>`;
     $('sheetBody').innerHTML = html;
   };
   openSheet(c.n, '', paint);
   const k = rtKey();
-  Promise.all([ensureTimes([c]), ensureWeather([c])]).then(() => { if (sheetOpen && $('sheetTitle').textContent === c.n && rtKey() === k) paint(); });
+  Promise.all([ensureTimes([c]), ensureWeather([c]), loadDetail()]).then(() => { if (sheetOpen && $('sheetTitle').textContent === c.n && rtKey() === k) paint(); });
 }
 
 /* 기준점 */
@@ -475,17 +515,21 @@ function openFilter() {
   const chip = (grp, v, label, on) => `<button class="chip${on ? ' on' : ''}" data-g="${grp}" data-v="${esc(v)}">${esc(label)}</button>`;
   const body = () => `
     <div class="sec"><h4>유형 (하나라도 있으면)</h4><div class="chips">${TYPES.map((l, i) => chip('types', i, l, f.types.includes(i))).join('')}</div>
-      <p class="note">바베큐장은 공공데이터 항목에 없어서 필터로 고를 수 없어요.</p></div>
-    <div class="sec"><h4>시설 (모두 있는 곳)</h4><div class="chips">${META.fac.map((l, i) => chip('fac', i, nice(l), f.fac.includes(i))).join('')}</div></div>
+      <p class="note">바베큐는 따로 정리된 항목이 없어 이름·소개글에 ‘바베큐’가 들어간 곳만 골라요. 화로대 사용은 아래 시설에서.</p></div>
+    <div class="sec"><h4>시설 (모두 있는 곳)</h4><div class="chips">${META.fac.map((l, i) => chip('fac', i, nice(l), f.fac.includes(i))).join('')}${chip('braz', 1, '🔥 화로대 개별 사용', f.braz)}</div></div>
+    <div class="sec"><h4>입지 (하나라도 있으면)</h4><div class="chips">${META.lct.map((l, i) => chip('lct', i, l, f.lct.includes(i))).join('')}</div>
+      <p class="note">입지는 고캠핑에 있는 곳만 정보가 있어요.</p></div>
     <div class="sec"><h4>환경·주변 (하나라도 있으면)</h4><div class="chips">${ENV.map((l) => chip('env', l, l, f.env.includes(l))).join('')}</div></div>
     <div class="sec"><h4>반려동물</h4><div class="chips">${['상관없음', '소형견 이상 가능', '대형견도 가능'].map((l, i) => chip('pet', i, l, f.pet === i)).join('')}</div></div>
+    <div class="sec"><h4>운영</h4><div class="chips">${chip('open', 1, '휴장 중인 곳 빼기', f.open)}</div></div>
     <div class="sec"><h4>지역</h4><div class="chips">${SIDOS.map((s) => chip('sido', s, s, f.sido.includes(s))).join('')}</div></div>
     <div class="sheet-foot"><button id="fReset">초기화</button><button class="pri" id="fApply">적용</button></div>`;
   openSheet('필터', body(), function wire(b) {
     b.querySelectorAll('.chip').forEach((el) => {
       el.onclick = () => {
-        const g = el.dataset.g, raw = el.dataset.v, v = g === 'types' || g === 'fac' || g === 'pet' ? +raw : raw;
+        const g = el.dataset.g, raw = el.dataset.v, v = ['types', 'fac', 'pet', 'lct'].includes(g) ? +raw : raw;
         if (g === 'pet') f.pet = v;
+        else if (g === 'braz' || g === 'open') f[g] = !f[g];
         else { const a = f[g], i = a.indexOf(v); i >= 0 ? a.splice(i, 1) : a.push(v); }
         b.innerHTML = body(); wire(b);
       };
@@ -507,7 +551,8 @@ function openSettings() {
       ② 목록에 보이는 곳부터 카카오내비의 그 날짜·시각 출발 예측 소요시간으로 바꿉니다(‘예측’ 표시). 예측이 제한을 넘으면 목록에서 빠집니다.<br>
       거리도 예측 전엔 직선, 예측 후엔 도로 거리입니다.</p></div>
     <div class="sec"><h4>데이터</h4>
-      <p class="note">${esc(META.source)} — ${META.count.toLocaleString()}곳. 좌표는 카카오 주소 검색으로 붙였고, 주소로 못 찾은 몇 곳은 ‘위치 대략’으로 표시됩니다.<br>
+      <p class="note">${esc(META.source)} — 모두 ${META.count.toLocaleString()}곳(고캠핑 ${META.gocamping.toLocaleString()}곳 중 ${META.matched.toLocaleString()}곳 짝지음, ${META.added}곳 추가). ${esc(META.built)} 기준.<br>
+      고캠핑과 짝지은 곳은 고캠핑 이름·위치·연락처를 쓰고, 나머지는 등록 현황 주소를 카카오로 위치 변환했습니다(몇 곳은 ‘위치 대략’).<br>
       날씨: Open-Meteo 일 예보(출발일 하루, 최저/최고·강수확률). 약 16일 이후는 ‘-’.</p></div>`, (b) => {
     b.querySelector('#sSave').onclick = async () => {
       S.token = b.querySelector('#sTok').value.trim(); tokenBad = false; save();
