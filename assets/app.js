@@ -36,6 +36,7 @@ const nice = (s) => s.replace('마트.편의점', '마트·편의점').replace('
 const DEF = {
   origin: null, saved: [], slot: 'fri', limit: 120, sort: 'time', view: 'card', tab: 'map', token: '',
   f: { types: [], fac: [], env: [], lct: [], pet: 0, sido: [], braz: false, open: false }, favs: {},
+  hides: {}, // 제외한 곳 { favKey: 제외한 시각 } — 해제 전까지 지도·목록·검색에 안 나온다(즐겨찾기 탭은 예외)
 };
 let S = load();
 function load() {
@@ -94,6 +95,8 @@ function inLimit(t) {
 /* ───────────── 필터 ───────────── */
 const favKey = (c) => c.n + '|' + c.a;
 const isFav = (c) => !!S.favs[favKey(c)];
+const isHid = (c) => !!S.hides[favKey(c)];
+const hidCount = () => Object.keys(S.hides).length;
 const norm = (s) => s.replace(/\s+/g, '').toLowerCase();
 function envOf(c) {
   if (!c._env) c._env = new Set([...c.th.map((i) => META.theme[i]), ...c.nb.map((i) => META.near[i])]);
@@ -114,13 +117,13 @@ function passFilters(c) {
 }
 function filterCount() { const f = S.f; return f.types.length + f.fac.length + f.env.length + f.lct.length + (f.pet ? 1 : 0) + f.sido.length + (f.braz ? 1 : 0) + (f.open ? 1 : 0); }
 
-// 지금 화면 기준 결과: [{c, t}] — 즐겨찾기 탭은 거리·필터를 무시하고 즐겨찾기 전부
+// 지금 화면 기준 결과: [{c, t}] — 즐겨찾기 탭은 거리·필터·제외를 무시하고 즐겨찾기 전부
 function results() {
   const q = norm($('q').value || '');
   const fav = S.tab === 'fav';
   const out = [];
   for (const c of CAMPS) {
-    if (fav ? !isFav(c) : !passFilters(c)) continue;
+    if (fav ? !isFav(c) : isHid(c) || !passFilters(c)) continue;
     if (q && !c._q.includes(q)) continue;
     const t = trip(c);
     if (!fav && !inLimit(t)) continue;
@@ -223,7 +226,11 @@ async function copy(text) {
   toast('주소를 복사했어요');
 }
 let toastT;
-function toast(m) { const t = $('toast'); t.textContent = m; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => { t.hidden = true; }, 2200); }
+function toast(m, act) {
+  const t = $('toast'); t.textContent = m; t.hidden = false;
+  if (act) { const b = document.createElement('button'); b.className = 'toast-act'; b.textContent = act.label; b.onclick = () => { t.hidden = true; act.fn(); }; t.appendChild(b); }
+  clearTimeout(toastT); toastT = setTimeout(() => { t.hidden = true; }, act ? 4000 : 2200);
+}
 
 /* ───────────── 목록 렌더 ───────────── */
 function timeHTML(t) {
@@ -250,9 +257,10 @@ function actsHTML(c) {
     ${c.rv ? `<a href="${esc(c.rv)}" target="_blank" rel="noopener">📅 예약</a>` : c.hp ? `<a href="${esc(c.hp)}" target="_blank" rel="noopener">🏠 홈페이지</a>` : `<a href="${goCamping(c)}" target="_blank" rel="noopener">⛺ 고캠핑</a>`}
   </div>`;
 }
+const hideBtn = (c) => `<button class="hide-btn${isHid(c) ? ' on' : ''}" data-hide="${c.id}">${isHid(c) ? '제외됨' : '제외'}</button>`;
 function cardHTML({ c, t }) {
   return `<div class="card">
-    <div class="card-h"><button class="nm" data-open="${c.id}">${esc(c.n)}</button><button class="star${isFav(c) ? ' on' : ''}" data-fav="${c.id}" aria-label="즐겨찾기">★</button></div>
+    <div class="card-h"><button class="nm" data-open="${c.id}">${esc(c.n)}</button>${hideBtn(c)}<button class="star${isFav(c) ? ' on' : ''}" data-fav="${c.id}" aria-label="즐겨찾기">★</button></div>
     <div class="rg">${esc(c.s)} ${esc(c.g)}${c.ap ? ' · <span class="warn">위치 대략</span>' : ''}</div>
     ${c.li ? `<div class="li">${esc(c.li)}</div>` : ''}
     <div class="facts">${timeHTML(t)}${distHTML(t)}<span class="wx">${wxText(c)}</span></div>
@@ -270,8 +278,9 @@ function tableHTML(list) {
     <td>${typeList(c).map((i) => TYPE_SHORT[i]).join('·')}${closed(c) ? ' <span class="warn">휴장</span>' : ''}</td>
     <td>${c.p == null ? '-' : ['✕', '소형견', '가능'][c.p]}</td>
     <td><button class="mini" data-copy="${c.id}">복사</button></td>
+    <td>${hideBtn(c)}</td>
   </tr>`).join('');
-  return `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>★</th><th>이름</th><th>지역</th><th>이동시간</th><th>거리</th><th>날씨</th><th>유형</th><th>반려견</th><th>주소</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  return `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>★</th><th>이름</th><th>지역</th><th>이동시간</th><th>거리</th><th>날씨</th><th>유형</th><th>반려견</th><th>주소</th><th>제외</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 let renderQueued = false;
@@ -299,10 +308,13 @@ function render() {
   const list = res.slice(0, shown);
   const fav = S.tab === 'fav';
   const real = res.filter((r) => r.t?.real).length;
+  const nh = hidCount();
+  $('btnHidden').hidden = fav || !nh;
+  $('btnHidden').textContent = `🚫 제외 ${nh}`;
   $('listCount').textContent = fav ? `즐겨찾기 ${res.length}곳`
     : `${res.length.toLocaleString()}곳` + (S.origin && S.limit ? ` (실제 확인 ${real.toLocaleString()})` : '');
   if (!res.length) {
-    $('listBody').innerHTML = `<div class="empty">${fav ? '아직 즐겨찾기가 없어요.<br>목록이나 지도에서 ★을 눌러 추가하세요.' : '조건에 맞는 캠핑장이 없어요.<br>필터나 시간 제한을 바꿔 보세요.'}</div>`;
+    $('listBody').innerHTML = `<div class="empty">${fav ? '아직 즐겨찾기가 없어요.<br>목록이나 지도에서 ★을 눌러 추가하세요.' : '조건에 맞는 캠핑장이 없어요.<br>필터나 시간 제한을 바꿔 보세요.' + (nh ? `<br><small>제외한 ${nh}곳은 빠져 있어요.</small>` : '')}</div>`;
   } else {
     $('listBody').innerHTML = S.view === 'table' ? tableHTML(list) : list.map(cardHTML).join('');
   }
@@ -372,6 +384,7 @@ function renderMap(res) {
   $('mapMsg').hidden = false;
   $('mapMsg').textContent = !S.origin ? `전국 ${res.length.toLocaleString()}곳 · 위의 📍에서 기준점을 정하세요`
     : `${res.length.toLocaleString()}곳 · 초록=실제 예측, 회색=추정, 노랑=즐겨찾기`;
+  if (hidCount()) $('mapMsg').textContent += ` · 제외 ${hidCount()}곳 숨김`;
 }
 function fitOrigin() {
   if (!map || !S.origin) return;
@@ -392,6 +405,7 @@ function closeSheet(fromPop) {
   if (!sheetOpen) return;
   sheetOpen = false;
   $('sheet').hidden = true;
+  if (renderBehind) { renderBehind = false; render(); }
   if (!fromPop && history.state?.sheet) history.back();
 }
 addEventListener('popstate', () => closeSheet(true));
@@ -420,7 +434,7 @@ function openCamp(id) {
         ${c.li ? `<div class="li">${esc(c.li)}</div>` : ''}
         <div class="facts">${timeHTML(t)}${distHTML(t)}<span class="wx">${wxText(c)}</span></div>
         ${t2 ? `<div class="rg">${SLOTS[o].label} ${pad(SLOTS[o].h)}:00 출발이면 ${t2.none ? '길찾기 결과 없음' : (t2.real ? '' : '~') + fmtMin(t2.min) + (t2.real ? ' (예측)' : ' (추정)')}</div>` : ''}
-        <div class="acts" style="margin-top:.4rem"><button class="star${isFav(c) ? ' on' : ''}" data-fav="${c.id}" style="flex:none;font-size:1.1rem">★ 즐겨찾기</button></div>
+        <div class="acts" style="margin-top:.4rem"><button class="star${isFav(c) ? ' on' : ''}" data-fav="${c.id}" style="flex:none;font-size:1.1rem">★ 즐겨찾기</button><button class="hide-btn big${isHid(c) ? ' on' : ''}" data-hide="${c.id}">${isHid(c) ? '🚫 제외됨 — 눌러서 해제' : '🚫 검색에서 제외'}</button></div>
       </div>
       <dl class="info">
         <dt>주소</dt><dd class="addr-row"><span>${esc(c.a) || '-'}${c.ap ? ' <span class="warn">(지도 위치는 읍·면 단위 대략)</span>' : ''}</span><button class="mini" data-copy="${c.id}">복사</button></dd>
@@ -539,6 +553,23 @@ function openFilter() {
   });
 }
 
+/* 제외 목록 */
+function openHidden() {
+  const byKey = new Map(CAMPS.map((c) => [favKey(c), c]));
+  const keys = Object.keys(S.hides).sort((a, b) => S.hides[b] - S.hides[a]); // 최근 제외한 곳부터
+  const items = keys.map((k) => {
+    const c = byKey.get(k), [n, a] = k.split('|');
+    return `<li><button class="pick"${c ? ` data-open="${c.id}"` : ''}>${esc(n)}<small>${c ? `${esc(c.s)} ${esc(c.g)}` : esc(a) + ' (데이터에서 사라짐)'}</small></button><button class="del" data-unhide="${esc(k)}">해제</button></li>`;
+  }).join('');
+  openSheet(`제외한 캠핑장 ${keys.length}곳`, keys.length
+    ? `<div class="sec"><p class="note">여기 있는 곳은 지도·목록·검색에 나오지 않아요(즐겨찾기 탭에는 나와요). ‘해제’하면 다시 나옵니다.</p><ul class="olist">${items}</ul></div>
+       <div class="sheet-foot"><button id="hAll">모두 해제</button></div>`
+    : '<div class="sec"><p class="note">제외한 곳이 없어요. 목록의 카드·표나 상세 화면에서 ‘제외’를 누르면 여기에 모여요.</p></div>', (b) => {
+    const all = b.querySelector('#hAll');
+    if (all) all.onclick = () => { if (!confirm(`제외한 ${keys.length}곳을 모두 해제할까요?`)) return; S.hides = {}; save(); mapSig = ''; openHidden(); render(); toast('모두 해제했어요'); };
+  });
+}
+
 /* 설정 */
 function openSettings() {
   openSheet('설정', `
@@ -546,6 +577,9 @@ function openSettings() {
       <label class="field">API 토큰<input id="sTok" type="password" value="${esc(S.token)}" placeholder="camp로 시작하는 토큰" autocomplete="off"></label>
       <button class="btn" id="sSave">저장·연결 확인</button> <span id="sMsg" class="note"></span>
       <p class="note">토큰이 없으면 직선거리로 추정한 시간만 보여요. 토큰은 이 기기에만 저장됩니다.</p></div>
+    <div class="sec"><h4>제외한 캠핑장</h4>
+      <button class="btn" id="sHid">🚫 제외 목록 보기 (${hidCount()}곳)</button>
+      <p class="note">제외한 곳은 해제할 때까지 지도·목록·검색에 나오지 않아요. 이 기기에만 저장됩니다.</p></div>
     <div class="sec"><h4>이동시간 계산 방식</h4>
       <p class="note">① 기준점→캠핑장 직선거리로 시간을 추정해 후보를 고릅니다(금 15:00 ≈ 35분 + 직선 1km당 0.88분, 토 10:00 ≈ 38분 + 0.92분 — 서울·대전·부산 출발 실제 예측 298건으로 맞춘 식, 80%가 ±17% 안).<br>
       ② 목록에 보이는 곳부터 카카오내비의 그 날짜·시각 출발 예측 소요시간으로 바꿉니다(‘예측’ 표시). 예측이 제한을 넘으면 목록에서 빠집니다.<br>
@@ -554,6 +588,7 @@ function openSettings() {
       <p class="note">${esc(META.source)} — 모두 ${META.count.toLocaleString()}곳(고캠핑 ${META.gocamping.toLocaleString()}곳 중 ${META.matched.toLocaleString()}곳 짝지음, ${META.added}곳 추가). ${esc(META.built)} 기준.<br>
       고캠핑과 짝지은 곳은 고캠핑 이름·위치·연락처를 쓰고, 나머지는 등록 현황 주소를 카카오로 위치 변환했습니다(몇 곳은 ‘위치 대략’).<br>
       날씨: Open-Meteo 일 예보(출발일 하루, 최저/최고·강수확률). 약 16일 이후는 ‘-’.</p></div>`, (b) => {
+    b.querySelector('#sHid').onclick = openHidden;
     b.querySelector('#sSave').onclick = async () => {
       S.token = b.querySelector('#sTok').value.trim(); tokenBad = false; save();
       const msg = b.querySelector('#sMsg'); msg.textContent = '확인 중…';
@@ -571,6 +606,7 @@ function openSettings() {
 function resetView() { shown = PAGE; autoBudget = 8; $('tabList').scrollTop = 0; }
 $('btnOrigin').onclick = openOrigin;
 $('btnFilter').onclick = openFilter;
+$('btnHidden').onclick = openHidden;
 $('btnSettings').onclick = openSettings;
 const seg = (id, key, conv) => document.querySelectorAll(`#${id} button`).forEach((b) => {
   b.onclick = () => { S[key] = conv(b.dataset.v); save(); resetView(); if (key === 'limit') fitOrigin(); render(); };
@@ -598,7 +634,7 @@ $('btnCheckAll').onclick = async () => {
 };
 // 목록·시트 안의 버튼(복사·즐겨찾기·상세)
 document.addEventListener('click', (e) => {
-  const el = e.target.closest('[data-copy],[data-fav],[data-open],[data-saved],[data-del]');
+  const el = e.target.closest('[data-copy],[data-fav],[data-hide],[data-unhide],[data-open],[data-saved],[data-del]');
   if (!el) return;
   if (el.dataset.copy != null) copy(CAMPS[+el.dataset.copy].a);
   else if (el.dataset.fav != null) {
@@ -608,10 +644,27 @@ document.addEventListener('click', (e) => {
     document.querySelectorAll(`[data-fav="${c.id}"]`).forEach((s) => s.classList.toggle('on', !!S.favs[k]));
     toast(S.favs[k] ? '즐겨찾기에 추가했어요' : '즐겨찾기에서 뺐어요');
     if (S.tab !== 'list') { mapSig = ''; if (!sheetOpen) render(); }
-  } else if (el.dataset.open != null) openCamp(+el.dataset.open);
+  } else if (el.dataset.hide != null) {
+    const c = CAMPS[+el.dataset.hide];
+    setHidden(favKey(c), !isHid(c));
+  } else if (el.dataset.unhide != null) { setHidden(el.dataset.unhide, false); openHidden(); }
+  else if (el.dataset.open != null) openCamp(+el.dataset.open);
   else if (el.dataset.saved != null) setOrigin(S.saved[+el.dataset.saved]);
   else if (el.dataset.del != null) { S.saved.splice(+el.dataset.del, 1); save(); openOrigin(); } // 열린 시트 내용만 바꾼다
 });
+
+function setHidden(k, on) {
+  if (on) S.hides[k] = Date.now(); else delete S.hides[k];
+  save(); mapSig = '';
+  const name = k.split('|')[0];
+  toast(on ? `‘${name}’ 제외했어요` : `‘${name}’ 다시 보여요`, { label: '되돌리기', fn: () => setHidden(k, !on) });
+  document.querySelectorAll('#sheetBody .hide-btn.big').forEach((el) => {
+    if (favKey(CAMPS[+el.dataset.hide]) !== k) return;
+    el.classList.toggle('on', on); el.textContent = on ? '🚫 제외됨 — 눌러서 해제' : '🚫 검색에서 제외';
+  });
+  if (!sheetOpen) render(); else renderBehind = true;
+}
+let renderBehind = false; // 시트가 열려 있는 동안 바뀐 목록은 시트를 닫을 때 다시 그린다
 
 /* ───────────── 시작 ───────────── */
 (async function start() {

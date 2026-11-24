@@ -141,3 +141,10 @@ dl.info dd { margin: 0; }
 .txt { margin: 0; font-size: .86rem; line-height: 1.6; white-space: pre-line; }
 dl.info dd a { color: var(--pri); }
 .note { font-size: .76rem; color: var(--sub); line-height: 1.5; }
+
+/* 제외 */
+.hide-btn { background: none; border: 1px solid var(--line); border-radius: .4rem; padding: .05rem .4rem; font-size: .74rem; color: var(--sub); white-space: nowrap; line-height: 1.5; }
+.hide-btn.on { background: #fbeaea; border-color: #e6b8b8; color: #a33; }
+.hide-btn.big { flex: none; font-size: .85rem; padding: .25rem .6rem; }
+.hid-chip { border: 1px solid #e6b8b8; background: #fbeaea; color: #a33; border-radius: 1rem; padding: .1rem .55rem; font-size: .78rem; white-space: nowrap; }
+.toast-act { margin-left: .7rem; background: none; border: 0; color: #ffd36b; font-weight: 700; font-size: .85rem; padding: 0; }

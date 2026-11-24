@@ -8,7 +8,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="assets/icon-192.png">
-<link rel="stylesheet" href="assets/app.css?v=2">
+<link rel="stylesheet" href="assets/app.css?v=3">
 </head>
 <body>
 <header class="top">
@@ -40,6 +40,7 @@
   <section id="tabList" class="tab" hidden>
     <div class="list-bar">
       <span id="listCount"></span>
+      <button id="btnHidden" class="hid-chip" hidden></button>
       <select id="sortSel" aria-label="정렬">
         <option value="time">이동시간순</option>
         <option value="dist">거리순</option>
@@ -71,6 +72,6 @@
 </div>
 <div id="toast" class="toast" hidden></div>
 
-<script src="assets/app.js?v=2"></script>
+<script src="assets/app.js?v=3"></script>
 </body>
 </html>
