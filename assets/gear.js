@@ -7,6 +7,7 @@
  *   처음 연결하는 기기는 서버에 목록이 있으면 서버 것을 받는다(기기 목록은 'camp-gear-backup' 에 남김).
  *   사진은 올릴 것(upq)·지울 것(delq)을 모았다가 목록 저장 전에 처리, 없는 사진은 볼 때 서버에서 받는다.
  * 평소: 첫 열 체크 → 그 행이 회색. ✏️ 수정 누르면 추가·삭제·내용 수정·그림 추가/삭제.
+ * 순서: 행의 ≡ 손잡이를 끌어 옮긴다(평소·수정 둘 다). 다른 분류 사이에 놓으면 그 분류로 바뀐다.
  */
 
 const gid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -169,13 +170,13 @@ function adoptRemote(rm) {
   storeGear();
 }
 async function pullGear(force) {
-  if (!canSync() || pushing || gearEdit) return; // 수정 중엔 화면을 바꾸지 않는다
+  if (!canSync() || pushing || gearEdit || gDrag) return; // 수정·끌기 중엔 화면을 바꾸지 않는다
   if (!force && Date.now() - lastPull < 5000) return;
   lastPull = Date.now();
   setSync('busy');
   try {
     const rm = await api('/api/gear');
-    if (gearEdit) { setSync('ok'); return; }
+    if (gearEdit || gDrag) { setSync('ok'); return; }
     if (!rm.items) { G.dirty = true; storeGear(); setSync(''); await pushGear(); return; } // 서버가 비어 있으면 이 기기 목록을 올린다
     let changed = false;
     if (!G.rev && !G.fresh) { // 처음 연결하는 기기 — 서버 목록을 받고, 이 기기 목록은 백업
@@ -212,6 +213,7 @@ function gearRowView(it) {
     <td class="g-nm"><span>${esc(it.name)}</span>${pics}</td>
     <td class="g-qty">${esc(it.qty)}</td>
     <td class="g-note">${esc(it.note)}</td>
+    <td class="g-mv"><span class="g-grip" data-ggrip aria-label="끌어서 옮기기">≡</span></td>
   </tr>`;
 }
 // 수정 모드는 폰 폭에 맞게 항목당 2줄: 위 삭제·분류·품목·갯수 / 아래 비고·그림
@@ -219,7 +221,7 @@ function gearRowEdit(it) {
   const pics = it.imgs.map((im) =>
     `<span class="g-thumb"><img data-gimg="${im}" alt="" data-gview="${it.id}"><button data-gimgdel="${it.id}|${im}" aria-label="그림 삭제">✕</button></span>`).join('');
   return `<tr class="g-r1" data-gid="${it.id}">
-    <td class="g-ck" rowspan="2"><button class="g-del" data-gdel="${it.id}" aria-label="삭제">🗑</button></td>
+    <td class="g-ck" rowspan="2"><button class="g-del" data-gdel="${it.id}" aria-label="삭제">🗑</button><span class="g-grip" data-ggrip aria-label="끌어서 옮기기">≡</span></td>
     <td class="g-cat"><select data-gf="cat" aria-label="분류">${catOpts(it.cat)}</select></td>
     <td class="g-nm"><input data-gf="name" value="${esc(it.name)}" placeholder="품목"></td>
     <td class="g-qty"><input data-gf="qty" type="number" min="0" inputmode="numeric" value="${esc(it.qty)}" aria-label="갯수"></td>
@@ -229,6 +231,8 @@ function gearRowEdit(it) {
   </tr>`;
 }
 const catRank = (c) => { const i = GEAR_CATS.indexOf(c); return i < 0 ? 99 : i; };
+// 분류 순서대로, 같은 분류 안에서는 목록 순서대로
+const sortedItems = () => G.items.map((it, i) => [it, i]).sort((a, b) => catRank(a[0].cat) - catRank(b[0].cat) || a[1] - b[1]).map(([it]) => it);
 
 function renderGear() {
   const box = $('gearBody');
@@ -245,10 +249,9 @@ function renderGear() {
     return;
   }
   box.innerHTML = `<div class="tbl-wrap"><table class="tbl gear${gearEdit ? ' edit' : ''}">
-    <thead><tr><th class="g-ck">${gearEdit ? '삭제' : '체크'}</th><th>분류</th><th>품목</th><th class="g-qty">갯수</th>${gearEdit ? '' : '<th>비고</th>'}</tr>
+    <thead><tr><th class="g-ck">${gearEdit ? '삭제' : '체크'}</th><th>분류</th><th>품목</th><th class="g-qty">갯수</th>${gearEdit ? '' : '<th>비고</th><th class="g-mv"></th>'}</tr>
       ${gearEdit ? '<tr><th></th><th colspan="3" class="g-sub">비고 · 그림</th></tr>' : ''}</thead>
-    <tbody>${gearEdit ? G.items.map(gearRowEdit).join('')
-      : G.items.map((it, i) => [it, i]).sort((a, b) => catRank(a[0].cat) - catRank(b[0].cat) || a[1] - b[1]).map(([it]) => gearRowView(it)).join('')}</tbody>
+    <tbody>${sortedItems().map(gearEdit ? gearRowEdit : gearRowView).join('')}</tbody>
   </table></div>`;
   fillImgs(box);
 }
@@ -334,3 +337,80 @@ function renderGearCount() {
   $('gearCount').textContent = `${d} / ${n} 챙김`;
   $('btnGearReset').hidden = !d;
 }
+
+/* ───── 끌어서 순서 바꾸기 ─────
+ * ≡ 손잡이를 누른 채 위아래로 움직이면 다른 항목들이 비켜난다(끄는 행 자체는 DOM에서 떼지 않아 터치가 끊기지 않음).
+ * 놓으면 화면 순서를 그대로 목록 순서로 저장. 앞뒤 항목이 모두 다른 분류면 그 분류로 바뀐다. 화면 끝에 가까우면 저절로 굴러간다. */
+let gDrag = null;
+const gRows = (id) => [...gearBox.querySelectorAll(`tr[data-gid="${id}"]`)];
+function gGroups() { // 화면에 있는 항목 순서 [{ id, rows }]
+  const out = [];
+  for (const r of gearBox.querySelectorAll('tbody tr[data-gid]')) {
+    const last = out[out.length - 1];
+    if (last?.id === r.dataset.gid) last.rows.push(r); else out.push({ id: r.dataset.gid, rows: [r] });
+  }
+  return out;
+}
+function gDragCat() { // 지금 자리에서 가질 분류
+  const gs = gGroups(), k = gs.findIndex((g) => g.id === gDrag.id);
+  const prev = gs[k - 1] && gItem(gs[k - 1].id)?.cat, next = gs[k + 1] && gItem(gs[k + 1].id)?.cat;
+  const own = gDrag.cat0;
+  if (prev === own || next === own || (!prev && !next)) return own;
+  return prev ?? next;
+}
+function gDragPlace() {
+  const D = gDrag.rows, others = gGroups().filter((g) => g.id !== gDrag.id);
+  const mid = (g) => { const a = g.rows[0].getBoundingClientRect(), b = g.rows[g.rows.length - 1].getBoundingClientRect(); return (a.top + b.bottom) / 2; };
+  const t = others.filter((g) => mid(g) < gDrag.y).length; // 손가락 위에 있어야 할 항목 수
+  let c = others.findIndex((g) => g.rows[0].compareDocumentPosition(D[0]) & Node.DOCUMENT_POSITION_PRECEDING);
+  if (c < 0) c = others.length;
+  if (c === t) return;
+  while (c < t) { D[0].before(...others[c].rows); c++; } // 아래로 — 뒤 항목을 앞으로
+  while (c > t) { c--; D[D.length - 1].after(...others[c].rows); } // 위로 — 앞 항목을 뒤로
+  const cat = gDragCat();
+  if (cat !== gDrag.cat) {
+    gDrag.cat = cat;
+    const cell = D[0].querySelector('.g-cat'), sel = cell?.querySelector('select');
+    if (sel) sel.value = cat; else if (cell) cell.textContent = cat;
+  }
+}
+function gDragTick() { // 화면 끝 근처면 굴리기
+  if (!gDrag) return;
+  const sc = $('tabGear'), r = sc.getBoundingClientRect(), edge = 56;
+  const v = gDrag.y < r.top + edge ? -(r.top + edge - gDrag.y) / 4 : gDrag.y > r.bottom - edge ? (gDrag.y - r.bottom + edge) / 4 : 0;
+  if (v) { sc.scrollTop += Math.max(-18, Math.min(18, v)); gDragPlace(); }
+  gDrag.raf = requestAnimationFrame(gDragTick);
+}
+gearBox.addEventListener('pointerdown', (e) => {
+  const g = e.target.closest('[data-ggrip]'); if (!g || gDrag || (e.button && e.pointerType === 'mouse')) return;
+  e.preventDefault();
+  document.activeElement?.blur?.(); // 수정 중 입력칸 값부터 저장
+  const id = g.closest('tr[data-gid]').dataset.gid, it = gItem(id); if (!it) return;
+  const rows = gRows(id);
+  rows.forEach((r) => r.classList.add('g-drag'));
+  document.body.classList.add('g-dragging');
+  gDrag = { id, rows, y: e.clientY, pid: e.pointerId, cat0: it.cat, cat: it.cat };
+  try { g.setPointerCapture(e.pointerId); } catch {}
+  gDrag.raf = requestAnimationFrame(gDragTick);
+});
+addEventListener('pointermove', (e) => {
+  if (!gDrag || e.pointerId !== gDrag.pid) return;
+  e.preventDefault();
+  gDrag.y = e.clientY; gDragPlace();
+}, { passive: false });
+function gDragEnd(e) {
+  if (!gDrag || e.pointerId !== gDrag.pid) return;
+  const d = gDrag; gDrag = null;
+  cancelAnimationFrame(d.raf);
+  document.body.classList.remove('g-dragging');
+  d.rows.forEach((r) => r.classList.remove('g-drag'));
+  const order = gGroups().map((g) => gItem(g.id)).filter(Boolean);
+  const it = gItem(d.id);
+  const moved = order.some((x, i) => x !== sortedItems()[i]) || (it && it.cat !== d.cat);
+  if (!moved) return;
+  if (it) it.cat = d.cat;
+  G.items = order.concat(G.items.filter((x) => !order.includes(x)));
+  saveGear(); renderGear();
+}
+addEventListener('pointerup', gDragEnd);
+addEventListener('pointercancel', gDragEnd);
