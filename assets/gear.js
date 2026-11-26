@@ -1,8 +1,11 @@
 'use strict';
 /* 준비물 탭 — app.js 다음에 읽힌다($, esc, toast, openSheet, closeSheet 를 같이 쓴다).
  *
- * 목록: localStorage 'camp-gear' = { items:[{ id, cat, name, qty, note, imgs:[이미지id], done }] } — 기기별 저장.
+ * 목록: localStorage 'camp-gear' = { items:[{ id, cat, name, qty, note, imgs:[이미지id], done }], rev, dirty, editAt, fresh, upq, delq }
  * 그림: IndexedDB 'camp-gear' / 'img' (id → Blob). 긴 변 1280px JPEG 로 줄여 넣는다.
+ * 동기화: ⚙︎ 앱 토큰이 있으면 camping-api /api/gear(R2)와 맞춘다 — 나중에 고친 쪽이 이긴다(editAt vs 서버 rev).
+ *   처음 연결하는 기기는 서버에 목록이 있으면 서버 것을 받는다(기기 목록은 'camp-gear-backup' 에 남김).
+ *   사진은 올릴 것(upq)·지울 것(delq)을 모았다가 목록 저장 전에 처리, 없는 사진은 볼 때 서버에서 받는다.
  * 평소: 첫 열 체크 → 그 행이 회색. ✏️ 수정 누르면 추가·삭제·내용 수정·그림 추가/삭제.
  */
 
@@ -25,11 +28,22 @@ let gearEdit = false;
 function loadGear() {
   try {
     const v = JSON.parse(localStorage.getItem('camp-gear') || 'null');
-    if (v && Array.isArray(v.items)) return v;
+    if (v && Array.isArray(v.items)) {
+      if (v.rev == null) { // 동기화 전 버전에서 고친 목록 — 올릴 대상
+        Object.assign(v, { rev: 0, dirty: true, editAt: Date.now(), fresh: false, upq: v.items.flatMap((x) => x.imgs), delq: [] });
+      }
+      return v;
+    }
   } catch {}
-  return { items: GEAR_SEED.map(([cat, name, qty, note]) => ({ id: gid(), cat, name, qty, note, imgs: [], done: false })) };
+  return { items: GEAR_SEED.map(([cat, name, qty, note]) => ({ id: gid(), cat, name, qty, note, imgs: [], done: false })),
+    rev: 0, dirty: false, editAt: 0, fresh: true, upq: [], delq: [] };
 }
-function saveGear() { try { localStorage.setItem('camp-gear', JSON.stringify(G)); } catch { toast('저장 공간이 부족해요'); } }
+function storeGear() { try { localStorage.setItem('camp-gear', JSON.stringify(G)); } catch { toast('저장 공간이 부족해요'); } }
+let editSeq = 0;
+function saveGear() { // 사용자가 고친 것 — 저장하고 잠시 뒤 서버로
+  G.dirty = true; G.fresh = false; G.editAt = Date.now(); editSeq++;
+  storeGear(); schedulePush();
+}
 const gItem = (id) => G.items.find((x) => x.id === id);
 
 /* ───── 그림 저장소(IndexedDB) ───── */
@@ -59,7 +73,13 @@ const imgGet = (id) => idbDo('readonly', (s) => s.get(id));
 const URLS = new Map(); // 이미지id → objectURL
 async function imgURL(id) {
   if (URLS.has(id)) return URLS.get(id);
-  const b = await imgGet(id).catch(() => null);
+  let b = await imgGet(id).catch(() => null);
+  if (!b && canSync()) { // 다른 기기에서 넣은 사진 — 서버에서 받아 이 기기에도 둔다
+    try {
+      const r = await fetch(`${API}/api/gear/img/${id}`, { headers: { 'X-App-Token': S.token } });
+      if (r.ok) { b = await r.blob(); imgPut(id, b).catch(() => {}); }
+    } catch {}
+  }
   if (!b) return '';
   const u = URL.createObjectURL(b); URLS.set(id, u); return u;
 }
@@ -74,6 +94,81 @@ async function shrink(file) {
   bmp.close?.();
   return new Promise((ok) => cv.toBlob((b) => ok(b || file), 'image/jpeg', 0.82));
 }
+/* ───── 동기화 ───── */
+const canSync = () => !!S.token && !tokenBad;
+let syncState = '', pushT = 0, pushing = null, lastPull = 0;
+function setSync(st) { syncState = st; const el = $('gearSync'); if (el) el.textContent = syncLabel(); }
+function syncLabel() {
+  if (!S.token) return '📱 이 기기에만 저장 (⚙︎ 토큰 넣으면 동기화)';
+  if (tokenBad) return '⚠️ 토큰이 맞지 않아 이 기기에만 저장';
+  return { busy: '⏳ 동기화 중…', ok: '☁️ 동기화됨', off: '⚠️ 연결 안 됨 — 나중에 다시 올려요' }[syncState] || (G.dirty ? '⏳ 올릴 내용 있음' : '☁️ 동기화됨');
+}
+const hdr = (extra) => ({ 'X-App-Token': S.token, ...extra });
+async function api(path, opt = {}) {
+  const r = await fetch(API + path, { ...opt, headers: hdr(opt.headers) });
+  if (r.status === 401) { tokenBad = true; throw new Error('401'); }
+  if (!r.ok) throw new Error('http' + r.status);
+  return r.json();
+}
+function schedulePush() { clearTimeout(pushT); if (canSync()) pushT = setTimeout(pushGear, 1200); setSync(''); }
+async function pushGear() {
+  clearTimeout(pushT);
+  if (!canSync() || !G.dirty) return;
+  if (pushing) { await pushing; if (G.dirty) schedulePush(); return; }
+  pushing = (async () => {
+    const seq = editSeq;
+    setSync('busy');
+    try {
+      for (const im of [...G.upq]) { // 사진 먼저 — 목록이 가리키는 사진이 서버에 없지 않게
+        const b = await imgGet(im).catch(() => null);
+        if (b) await api(`/api/gear/img/${im}`, { method: 'PUT', headers: { 'Content-Type': 'image/jpeg' }, body: b });
+        G.upq = G.upq.filter((x) => x !== im); storeGear();
+      }
+      for (const im of [...G.delq]) {
+        await api(`/api/gear/img/${im}`, { method: 'DELETE' }).catch((e) => { if (e.message === '401') throw e; });
+        G.delq = G.delq.filter((x) => x !== im); storeGear();
+      }
+      const { rev } = await api('/api/gear', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: G.items }) });
+      G.rev = rev; if (seq === editSeq) G.dirty = false;
+      storeGear(); setSync('ok');
+    } catch { setSync('off'); if (tokenBad) toast('API 토큰이 맞지 않아요. ⚙︎ 설정에서 확인해 주세요'); }
+  })();
+  await pushing; pushing = null;
+  if (G.dirty && syncState === 'ok') schedulePush(); // 올리는 동안 또 고친 것
+}
+function adoptRemote(rm) {
+  const keep = new Set(rm.items.flatMap((x) => x.imgs));
+  for (const it of G.items) for (const im of it.imgs) if (!keep.has(im)) { dropURL(im); imgDel(im).catch(() => {}); } // 서버에서 지워진 사진 정리
+  G.items = rm.items; G.rev = rm.rev; G.dirty = false; G.fresh = false; G.upq = []; G.delq = [];
+  storeGear();
+}
+async function pullGear(force) {
+  if (!canSync() || pushing || gearEdit) return; // 수정 중엔 화면을 바꾸지 않는다
+  if (!force && Date.now() - lastPull < 5000) return;
+  lastPull = Date.now();
+  setSync('busy');
+  try {
+    const rm = await api('/api/gear');
+    if (gearEdit) { setSync('ok'); return; }
+    if (!rm.items) { G.dirty = true; storeGear(); setSync(''); await pushGear(); return; } // 서버가 비어 있으면 이 기기 목록을 올린다
+    let changed = false;
+    if (!G.rev && !G.fresh) { // 처음 연결하는 기기 — 서버 목록을 받고, 이 기기 목록은 백업
+      try { localStorage.setItem('camp-gear-backup', JSON.stringify({ at: Date.now(), items: G.items })); } catch {}
+      adoptRemote(rm); changed = true;
+      toast('다른 기기의 준비물 목록을 받아왔어요');
+    } else if (G.dirty && G.editAt > rm.rev) { setSync(''); await pushGear(); return; } // 여기서 더 나중에 고침
+    else if (rm.rev !== G.rev || G.fresh) { adoptRemote(rm); changed = true; }
+    setSync('ok');
+    if (changed && S.tab === 'gear') renderGear();
+  } catch { setSync('off'); }
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') pushGear();
+  else if (S.tab === 'gear') pullGear();
+});
+addEventListener('online', () => { pushGear().then(() => pullGear(true)); });
+function gearSyncNow() { lastPull = 0; setSync(''); pushGear().then(() => pullGear(true)); } // ⚙︎ 토큰 저장 뒤
+
 // 화면에 그려진 <img data-gimg="id"> 들에 실제 그림을 채운다
 function fillImgs(root) {
   root.querySelectorAll('img[data-gimg]').forEach(async (el) => { el.src = await imgURL(el.dataset.gimg); });
@@ -111,6 +206,8 @@ const catRank = (c) => { const i = GEAR_CATS.indexOf(c); return i < 0 ? 99 : i; 
 
 function renderGear() {
   const box = $('gearBody');
+  $('gearSync').textContent = syncLabel();
+  pullGear();
   const n = G.items.length, d = G.items.filter((x) => x.done).length;
   $('gearCount').textContent = gearEdit ? `수정 중 · ${n}개` : `${d} / ${n} 챙김`;
   $('btnGearEdit').textContent = gearEdit ? '✔ 완료' : '✏️ 수정';
@@ -141,8 +238,9 @@ function gearAdd() {
 async function gearDelete(id) {
   const it = gItem(id); if (!it) return;
   if (!confirm(`‘${it.name || '(이름 없음)'}’ 항목을 삭제할까요?${it.imgs.length ? `\n그림 ${it.imgs.length}장도 함께 지워져요.` : ''}`)) return;
-  G.items = G.items.filter((x) => x.id !== id); saveGear();
-  for (const im of it.imgs) { dropURL(im); imgDel(im).catch(() => {}); }
+  G.items = G.items.filter((x) => x.id !== id);
+  for (const im of it.imgs) forgetImg(im);
+  saveGear();
   renderGear();
 }
 async function gearAddImgs(id, files) {
@@ -150,7 +248,7 @@ async function gearAddImgs(id, files) {
   toast('그림 넣는 중…');
   let ok = 0;
   for (const f of files) {
-    try { const im = gid(); await imgPut(im, await shrink(f)); it.imgs.push(im); ok++; } catch {}
+    try { const im = gid(); await imgPut(im, await shrink(f)); it.imgs.push(im); G.upq.push(im); ok++; } catch {}
   }
   saveGear(); renderGear();
   toast(ok ? `그림 ${ok}장 추가했어요` : '그림을 넣지 못했어요');
@@ -158,9 +256,13 @@ async function gearAddImgs(id, files) {
 async function gearDelImg(id, im) {
   const it = gItem(id); if (!it) return;
   if (!confirm('이 그림을 삭제할까요?')) return;
-  it.imgs = it.imgs.filter((x) => x !== im); saveGear();
-  dropURL(im); imgDel(im).catch(() => {});
+  it.imgs = it.imgs.filter((x) => x !== im);
+  forgetImg(im); saveGear();
   renderGear();
+}
+function forgetImg(im) { // 아직 안 올린 사진이면 올릴 목록에서만 빼고, 올린 사진이면 서버에서도 지운다
+  if (G.upq.includes(im)) G.upq = G.upq.filter((x) => x !== im); else G.delq.push(im);
+  dropURL(im); imgDel(im).catch(() => {});
 }
 function gearViewImgs(id) {
   const it = gItem(id); if (!it?.imgs.length) return;
@@ -168,11 +270,13 @@ function gearViewImgs(id) {
 }
 
 $('btnGearEdit').onclick = () => {
-  if (gearEdit) { // 완료 — 이름 빈 항목은 정리
+  if (gearEdit) { // 완료 — 이름 빈 항목은 정리하고 바로 올린다
     const empty = G.items.filter((x) => !x.name.trim() && !x.imgs.length);
     if (empty.length) { G.items = G.items.filter((x) => !empty.includes(x)); saveGear(); }
+    gearEdit = false; renderGear(); pushGear();
+    return;
   }
-  gearEdit = !gearEdit; renderGear();
+  gearEdit = true; renderGear();
 };
 $('btnGearAdd').onclick = gearAdd;
 $('btnGearReset').onclick = () => {

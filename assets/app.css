@@ -185,3 +185,4 @@ table.tbl.gear { min-width: 0; font-size: .88rem; }
 .g-thumb button { position: absolute; right: -.35rem; top: -.35rem; width: 1.1rem; height: 1.1rem; border-radius: 50%; border: 0; background: var(--warn); color: #fff; font-size: .6rem; line-height: 1.1rem; padding: 0; }
 .g-add-img { display: inline-block; vertical-align: middle; border: 1px dashed var(--pri); color: var(--pri); border-radius: .35rem; padding: .35rem .4rem; font-size: .78rem; cursor: pointer; }
 .g-big { display: block; width: 100%; border-radius: .6rem; margin-bottom: .6rem; background: #eef2ed; }
+.gear-sync { font-size: .76rem; color: var(--sub); padding: .35rem .8rem 0; }

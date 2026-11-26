@@ -4,6 +4,9 @@
 //                    → { when, times:{ id:{min,km} | null }, cached, called }
 //                    카카오모빌리티 '미래 운행 정보 길찾기'(/v1/future/directions) — 출발 시각 기준 예측 소요시간.
 //  GET  /api/gocamping?op=basedList&pageNo=&numOfRows=   고캠핑 원문 프록시(데이터 파일 만들 때만, GOCAMPING_KEY 시크릿)
+//  GET  /api/gear              준비물 목록 { items, rev } (없으면 { items:null, rev:0 })
+//  PUT  /api/gear              { items } 저장 → { rev }  (나중에 저장한 쪽이 이김)
+//  GET|PUT|DELETE /api/gear/img/<id>   준비물 사진(JPEG, 최대 5MB)
 //  GET  /api/health
 //
 // Secrets:  KAKAO_REST_KEY (카카오 개발자 REST API 키 — 주유비교앱과 같은 키)
@@ -19,7 +22,7 @@ function cors(req) {
   const o = req.headers.get('Origin') || '';
   return {
     'Access-Control-Allow-Origin': ALLOWED.includes(o) ? o : ALLOWED[0],
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, X-App-Token',
     'Access-Control-Max-Age': '86400',
     Vary: 'Origin',
@@ -93,6 +96,47 @@ async function gocamping(url, env, c) {
   return new Response(text, { status: r.status, headers: { 'Content-Type': r.headers.get('Content-Type') || 'text/plain', 'Cache-Control': 'no-store', ...c } });
 }
 
+// 준비물 동기화 — 기기들이 같은 목록·사진을 본다. 앱 토큰이 곧 동기화 비밀번호.
+async function gear(req, url, env, c) {
+  if (!env.GEAR) return json({ error: 'no_bucket' }, 500, c);
+  if (url.pathname === '/api/gear') {
+    if (req.method === 'GET') {
+      const o = await env.GEAR.get('gear/list.json');
+      return o ? new Response(o.body, { headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...c } })
+        : json({ items: null, rev: 0 }, 200, c);
+    }
+    if (req.method === 'PUT') {
+      const b = await req.json().catch(() => null);
+      if (!Array.isArray(b?.items) || b.items.length > 2000) return json({ error: 'bad_request' }, 400, c);
+      const items = b.items.map((x) => ({
+        id: String(x.id || '').slice(0, 40), cat: String(x.cat || '').slice(0, 20), name: String(x.name || '').slice(0, 100),
+        qty: Math.max(0, Math.min(9999, parseInt(x.qty, 10) || 0)), note: String(x.note || '').slice(0, 300),
+        imgs: (Array.isArray(x.imgs) ? x.imgs : []).map(String).filter((i) => /^[a-z0-9]{6,40}$/.test(i)).slice(0, 20), done: !!x.done,
+      })).filter((x) => x.id);
+      const rev = Date.now();
+      await env.GEAR.put('gear/list.json', JSON.stringify({ items, rev }), { httpMetadata: { contentType: 'application/json' } });
+      return json({ rev }, 200, c);
+    }
+  }
+  const m = url.pathname.match(/^\/api\/gear\/img\/([a-z0-9]{6,40})$/);
+  if (m) {
+    const key = `gear/img/${m[1]}`;
+    if (req.method === 'GET') {
+      const o = await env.GEAR.get(key);
+      if (!o) return json({ error: 'not_found' }, 404, c);
+      return new Response(o.body, { headers: { 'Content-Type': o.httpMetadata?.contentType || 'image/jpeg', 'Cache-Control': 'private, max-age=31536000, immutable', ...c } });
+    }
+    if (req.method === 'PUT') {
+      const buf = await req.arrayBuffer();
+      if (!buf.byteLength || buf.byteLength > 5 * 1024 * 1024) return json({ error: 'bad_size' }, 400, c);
+      await env.GEAR.put(key, buf, { httpMetadata: { contentType: 'image/jpeg' } });
+      return json({ ok: true }, 200, c);
+    }
+    if (req.method === 'DELETE') { await env.GEAR.delete(key); return json({ ok: true }, 200, c); }
+  }
+  return json({ error: 'not_found' }, 404, c);
+}
+
 export default {
   async fetch(req, env) {
     const c = cors(req);
@@ -100,10 +144,11 @@ export default {
     const url = new URL(req.url);
     try {
       if (url.pathname === '/' || url.pathname === '/api/health')
-        return json({ ok: true, kakao: !!env.KAKAO_REST_KEY, kv: !!env.CACHE, auth: env.APP_TOKEN ? 'on' : 'missing' }, 200, c);
+        return json({ ok: true, kakao: !!env.KAKAO_REST_KEY, kv: !!env.CACHE, gear: !!env.GEAR, auth: env.APP_TOKEN ? 'on' : 'missing' }, 200, c);
       if (!authed(req, env)) return json({ error: 'unauthorized' }, 401, c);
       if (url.pathname === '/api/times' && req.method === 'POST') return await times(req, env, c);
       if (url.pathname === '/api/gocamping' && req.method === 'GET') return await gocamping(url, env, c);
+      if (url.pathname.startsWith('/api/gear')) return await gear(req, url, env, c);
       return json({ error: 'not_found' }, 404, c);
     } catch (e) {
       return json({ error: 'server', detail: String(e).slice(0, 200) }, 500, c);

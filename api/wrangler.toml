@@ -9,6 +9,11 @@ preview_urls = false
 binding = "CACHE"
 id = "bfd024fde03346c882e599a650943b1f"
 
+# 준비물 동기화: 목록(gear/list.json)과 사진(gear/img/<id>) — R2 는 쓰자마자 다른 기기에서 읽힌다
+[[r2_buckets]]
+binding = "GEAR"
+bucket_name = "camping-gear"
+
 # 시크릿은 파일에 두지 않는다:
 #   wrangler secret put KAKAO_REST_KEY   # 주유비교앱과 같은 카카오 REST 키
 #   wrangler secret put APP_TOKEN        # 앱 ⚙︎ 설정에 넣는 토큰

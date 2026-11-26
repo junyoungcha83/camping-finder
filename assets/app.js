@@ -579,7 +579,7 @@ function openSettings() {
     <div class="sec"><h4>실제 이동시간 (카카오 미래 운행 길찾기)</h4>
       <label class="field">API 토큰<input id="sTok" type="password" value="${esc(S.token)}" placeholder="camp로 시작하는 토큰" autocomplete="off"></label>
       <button class="btn" id="sSave">저장·연결 확인</button> <span id="sMsg" class="note"></span>
-      <p class="note">토큰이 없으면 직선거리로 추정한 시간만 보여요. 토큰은 이 기기에만 저장됩니다.</p></div>
+      <p class="note">토큰이 없으면 직선거리로 추정한 시간만 보여요. 토큰은 이 기기에만 저장됩니다.<br>🎒 준비물 목록·사진도 이 토큰으로 기기끼리 동기화돼요(같은 토큰을 넣은 폰·태블릿이 같은 목록을 봐요).</p></div>
     <div class="sec"><h4>제외한 캠핑장</h4>
       <button class="btn" id="sHid">🚫 제외 목록 보기 (${hidCount()}곳)</button>
       <p class="note">제외한 곳은 해제할 때까지 지도·목록·검색에 나오지 않아요. 이 기기에만 저장됩니다.</p></div>
@@ -601,6 +601,7 @@ function openSettings() {
         if (r.status === 401) tokenBad = true;
       } catch { msg.textContent = '❌ 서버에 연결하지 못했어요'; }
       resetView(); render();
+      if (!tokenBad) gearSyncNow(); // 준비물 동기화도 같은 토큰
     };
   });
 }
