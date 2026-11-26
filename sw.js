@@ -1,6 +1,6 @@
 // 앱 껍데기는 캐시 우선, 데이터(camps.json)는 네트워크 우선 — 데이터 갱신이 바로 보이도록.
-const CACHE = 'camping-v8';
-const SHELL = ['./', 'index.html', 'assets/app.css?v=8', 'assets/app.js?v=8', 'assets/gear.js?v=8', 'assets/icon.svg', 'manifest.webmanifest', 'data/camps.json'];
+const CACHE = 'camping-v9';
+const SHELL = ['./', 'index.html', 'assets/app.css?v=9', 'assets/app.js?v=9', 'assets/gear.js?v=9', 'assets/icon.svg', 'manifest.webmanifest', 'data/camps.json'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL))); self.skipWaiting(); });
 self.addEventListener('activate', (e) => {
   e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k)))));

@@ -7,7 +7,7 @@
  *   처음 연결하는 기기는 서버에 목록이 있으면 서버 것을 받는다(기기 목록은 'camp-gear-backup' 에 남김).
  *   사진은 올릴 것(upq)·지울 것(delq)을 모았다가 목록 저장 전에 처리, 없는 사진은 볼 때 서버에서 받는다.
  * 평소: 첫 열 체크 → 그 행이 회색. ✏️ 수정 누르면 추가·삭제·내용 수정·그림 추가/삭제.
- * 순서: 행의 ≡ 손잡이를 끌어 옮긴다(평소·수정 둘 다). 다른 분류 사이에 놓으면 그 분류로 바뀐다.
+ * 순서: 행의 ≡ 손잡이를 끌어 옮긴다(평소·수정 둘 다). 분류는 끌어도 바뀌지 않고(✏️ 수정에서만), 화면은 항상 분류 순서로 다시 정렬된다.
  * 이번 여행: 굵은 구분선 위 = 이번에 챙길 것(trip:true), 아래 = 이번엔 안 챙김. 처음엔 선이 맨 위에 있고, 항목을 선 위로 끌어 올린다.
  */
 
@@ -355,7 +355,7 @@ function renderGearCount() {
 
 /* ───── 끌어서 순서 바꾸기 ─────
  * ≡ 손잡이를 누른 채 위아래로 움직이면 다른 항목들이 비켜난다(끄는 행 자체는 DOM에서 떼지 않아 터치가 끊기지 않음).
- * 놓으면 화면 순서를 그대로 목록 순서로 저장. 앞뒤 항목이 모두 다른 분류면 그 분류로 바뀐다. 화면 끝에 가까우면 저절로 굴러간다. */
+ * 놓으면 화면 순서를 목록 순서로 저장하고, 다시 그릴 때 (이번 여행 → 분류 순) 정렬한다. 분류는 바꾸지 않는다. 화면 끝에 가까우면 저절로 굴러간다. */
 let gDrag = null;
 const gRows = (id) => [...gearBox.querySelectorAll(`tr[data-gid="${id}"]`)];
 function gGroups() { // 화면에 있는 항목 순서 [{ id, rows }]
@@ -367,13 +367,6 @@ function gGroups() { // 화면에 있는 항목 순서 [{ id, rows }]
   }
   return out;
 }
-function gDragCat() { // 지금 자리에서 가질 분류
-  const gs = gGroups(), k = gs.findIndex((g) => g.id === gDrag.id);
-  const prev = gs[k - 1] && gItem(gs[k - 1].id)?.cat, next = gs[k + 1] && gItem(gs[k + 1].id)?.cat; // 구분선 너머는 이웃으로 보지 않음
-  const own = gDrag.cat0;
-  if (prev === own || next === own || (!prev && !next)) return own;
-  return prev ?? next;
-}
 function gDragPlace() {
   const D = gDrag.rows, others = gGroups().filter((g) => g.id !== gDrag.id);
   const mid = (g) => { const a = g.rows[0].getBoundingClientRect(), b = g.rows[g.rows.length - 1].getBoundingClientRect(); return (a.top + b.bottom) / 2; };
@@ -383,12 +376,6 @@ function gDragPlace() {
   if (c === t) return;
   while (c < t) { D[0].before(...others[c].rows); c++; } // 아래로 — 뒤 항목을 앞으로
   while (c > t) { c--; D[D.length - 1].after(...others[c].rows); } // 위로 — 앞 항목을 뒤로
-  const cat = gDragCat();
-  if (cat !== gDrag.cat) {
-    gDrag.cat = cat;
-    const cell = D[0].querySelector('.g-cat'), sel = cell?.querySelector('select');
-    if (sel) sel.value = cat; else if (cell) cell.textContent = cat;
-  }
 }
 function gDragTick() { // 화면 끝 근처면 굴리기
   if (!gDrag) return;
@@ -405,7 +392,7 @@ gearBox.addEventListener('pointerdown', (e) => {
   const rows = gRows(id);
   rows.forEach((r) => r.classList.add('g-drag'));
   document.body.classList.add('g-dragging');
-  gDrag = { id, rows, y: e.clientY, pid: e.pointerId, cat0: it.cat, cat: it.cat };
+  gDrag = { id, rows, y: e.clientY, pid: e.pointerId };
   try { g.setPointerCapture(e.pointerId); } catch {}
   gDrag.raf = requestAnimationFrame(gDragTick);
 });
@@ -423,9 +410,9 @@ function gDragEnd(e) {
   const gs = gGroups(), cut = gs.findIndex((g) => !g.id);
   const order = gs.map((g) => gItem(g.id)).filter(Boolean);
   const it = gItem(d.id), trip = cut >= 0 && gs.findIndex((g) => g.id === d.id) < cut;
-  const moved = order.some((x, i) => x !== sortedItems()[i]) || (it && (it.cat !== d.cat || !!it.trip !== trip));
+  const moved = order.some((x, i) => x !== sortedItems()[i]) || (it && !!it.trip !== trip);
   if (!moved) return;
-  if (it) { it.cat = d.cat; it.trip = trip; }
+  if (it) it.trip = trip; // 분류는 그대로 — 놓은 뒤 다시 그릴 때 분류 순서로 제자리를 찾는다
   G.items = order.concat(G.items.filter((x) => !order.includes(x)));
   saveGear(); renderGear();
 }
