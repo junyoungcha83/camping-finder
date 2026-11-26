@@ -298,11 +298,14 @@ function renderHeader() {
   $('whenNote').textContent = `출발 ${d.getMonth() + 1}/${d.getDate()}(${SLOTS[S.slot].label}) ${pad(d.getHours())}:00 기준 · 날씨도 이날 예보` +
     (S.token && !tokenBad ? '' : ' · 이동시간은 추정치(⚙︎ 토큰 넣으면 실제 예측)');
   $('tabMap').hidden = S.tab !== 'map';
-  $('tabList').hidden = S.tab === 'map';
+  $('tabList').hidden = S.tab === 'map' || S.tab === 'gear';
+  $('tabGear').hidden = S.tab !== 'gear';
+  document.body.classList.toggle('gear-mode', S.tab === 'gear'); // 준비물 탭에선 검색 줄을 숨긴다
 }
 
 function render() {
   renderHeader();
+  if (S.tab === 'gear') { renderGear(); return; }
   const res = results();
   if (S.tab === 'map') { renderMap(res); return; }
   const list = res.slice(0, shown);

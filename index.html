@@ -8,7 +8,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="assets/icon-192.png">
-<link rel="stylesheet" href="assets/app.css?v=3">
+<link rel="stylesheet" href="assets/app.css?v=4">
 </head>
 <body>
 <header class="top">
@@ -55,12 +55,22 @@
       <button id="btnCheckAll" class="ghost" hidden></button>
     </div>
   </section>
+  <section id="tabGear" class="tab" hidden>
+    <div class="list-bar">
+      <span id="gearCount"></span>
+      <button id="btnGearReset" class="mini" hidden>체크 모두 해제</button>
+      <button id="btnGearEdit" class="gear-edit">✏️ 수정</button>
+    </div>
+    <div id="gearBody"></div>
+    <div class="list-foot"><button id="btnGearAdd" class="ghost" hidden>＋ 항목 추가</button></div>
+  </section>
 </main>
 
 <nav class="tabs">
   <button data-tab="map" class="on">🗺️<span>지도</span></button>
   <button data-tab="list">📋<span>목록</span></button>
   <button data-tab="fav">⭐<span>즐겨찾기</span></button>
+  <button data-tab="gear">🎒<span>준비물</span></button>
 </nav>
 
 <div id="sheet" class="sheet" hidden>
@@ -72,6 +82,7 @@
 </div>
 <div id="toast" class="toast" hidden></div>
 
-<script src="assets/app.js?v=3"></script>
+<script src="assets/app.js?v=4"></script>
+<script src="assets/gear.js?v=4"></script>
 </body>
 </html>
