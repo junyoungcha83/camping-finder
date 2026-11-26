@@ -111,7 +111,7 @@ async function gear(req, url, env, c) {
       const items = b.items.map((x) => ({
         id: String(x.id || '').slice(0, 40), cat: String(x.cat || '').slice(0, 20), name: String(x.name || '').slice(0, 100),
         qty: Math.max(0, Math.min(9999, parseInt(x.qty, 10) || 0)), note: String(x.note || '').slice(0, 300),
-        imgs: (Array.isArray(x.imgs) ? x.imgs : []).map(String).filter((i) => /^[a-z0-9]{6,40}$/.test(i)).slice(0, 20), done: !!x.done,
+        imgs: (Array.isArray(x.imgs) ? x.imgs : []).map(String).filter((i) => /^[a-z0-9]{6,40}$/.test(i)).slice(0, 20), done: !!x.done, trip: !!x.trip,
       })).filter((x) => x.id);
       const rev = Date.now();
       await env.GEAR.put('gear/list.json', JSON.stringify({ items, rev }), { httpMetadata: { contentType: 'application/json' } });

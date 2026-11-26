@@ -8,6 +8,7 @@
  *   사진은 올릴 것(upq)·지울 것(delq)을 모았다가 목록 저장 전에 처리, 없는 사진은 볼 때 서버에서 받는다.
  * 평소: 첫 열 체크 → 그 행이 회색. ✏️ 수정 누르면 추가·삭제·내용 수정·그림 추가/삭제.
  * 순서: 행의 ≡ 손잡이를 끌어 옮긴다(평소·수정 둘 다). 다른 분류 사이에 놓으면 그 분류로 바뀐다.
+ * 이번 여행: 굵은 구분선 위 = 이번에 챙길 것(trip:true), 아래 = 이번엔 안 챙김. 처음엔 선이 맨 위에 있고, 항목을 선 위로 끌어 올린다.
  */
 
 const gid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -232,14 +233,23 @@ function gearRowEdit(it) {
 }
 const catRank = (c) => { const i = GEAR_CATS.indexOf(c); return i < 0 ? 99 : i; };
 // 분류 순서대로, 같은 분류 안에서는 목록 순서대로
-const sortedItems = () => G.items.map((it, i) => [it, i]).sort((a, b) => catRank(a[0].cat) - catRank(b[0].cat) || a[1] - b[1]).map(([it]) => it);
+// 이번 여행(선 위) 먼저, 그다음 분류 순서, 같은 분류 안에서는 목록 순서
+const sortedItems = () => G.items.map((it, i) => [it, i]).sort((a, b) => (b[0].trip ? 1 : 0) - (a[0].trip ? 1 : 0) || catRank(a[0].cat) - catRank(b[0].cat) || a[1] - b[1]).map(([it]) => it);
+function gearDivider(nTrip) {
+  const cols = gearEdit ? 4 : 6;
+  return `<tr class="g-div" data-gdiv><td colspan="${cols}"><span>${nTrip ? `▲ 이번 여행 ${nTrip}개 · ▼ 이번엔 안 챙김` : '▲ 이번 여행에 챙길 것을 이 선 위로 끌어 올리세요'}</span></td></tr>`;
+}
+function gearRows() {
+  const its = sortedItems(), k = its.filter((x) => x.trip).length, row = gearEdit ? gearRowEdit : gearRowView;
+  return its.slice(0, k).map(row).join('') + gearDivider(k) + its.slice(k).map(row).join('');
+}
 
 function renderGear() {
   const box = $('gearBody');
   $('gearSync').textContent = syncLabel();
   pullGear();
   const n = G.items.length, d = G.items.filter((x) => x.done).length;
-  $('gearCount').textContent = gearEdit ? `수정 중 · ${n}개` : `${d} / ${n} 챙김`;
+  $('gearCount').textContent = gearEdit ? `수정 중 · ${n}개` : countLabel();
   $('btnGearEdit').textContent = gearEdit ? '✔ 완료' : '✏️ 수정';
   $('btnGearEdit').classList.toggle('on', gearEdit);
   $('btnGearReset').hidden = gearEdit || !d;
@@ -251,7 +261,7 @@ function renderGear() {
   box.innerHTML = `<div class="tbl-wrap"><table class="tbl gear${gearEdit ? ' edit' : ''}">
     <thead><tr><th class="g-ck">${gearEdit ? '삭제' : '체크'}</th><th>분류</th><th>품목</th><th class="g-qty">갯수</th>${gearEdit ? '' : '<th>비고</th><th class="g-mv"></th>'}</tr>
       ${gearEdit ? '<tr><th></th><th colspan="3" class="g-sub">비고 · 그림</th></tr>' : ''}</thead>
-    <tbody>${sortedItems().map(gearEdit ? gearRowEdit : gearRowView).join('')}</tbody>
+    <tbody>${gearRows()}</tbody>
   </table></div>`;
   fillImgs(box);
 }
@@ -332,9 +342,14 @@ gearBox.addEventListener('click', (e) => {
   else if (el.dataset.gimgdel != null) { const [id, im] = el.dataset.gimgdel.split('|'); gearDelImg(id, im); }
   else if (el.dataset.gview != null) gearViewImgs(el.dataset.gview);
 });
+function countLabel() { // 이번 여행 항목이 있으면 그것만 센다
+  const t = G.items.filter((x) => x.trip);
+  if (!t.length) return `${G.items.filter((x) => x.done).length} / ${G.items.length} 챙김`;
+  return `이번 여행 ${t.filter((x) => x.done).length} / ${t.length} 챙김`;
+}
 function renderGearCount() {
-  const n = G.items.length, d = G.items.filter((x) => x.done).length;
-  $('gearCount').textContent = `${d} / ${n} 챙김`;
+  const d = G.items.filter((x) => x.done).length;
+  $('gearCount').textContent = countLabel();
   $('btnGearReset').hidden = !d;
 }
 
@@ -345,7 +360,8 @@ let gDrag = null;
 const gRows = (id) => [...gearBox.querySelectorAll(`tr[data-gid="${id}"]`)];
 function gGroups() { // 화면에 있는 항목 순서 [{ id, rows }]
   const out = [];
-  for (const r of gearBox.querySelectorAll('tbody tr[data-gid]')) {
+  for (const r of gearBox.querySelectorAll('tbody tr[data-gid], tbody tr[data-gdiv]')) {
+    if (r.dataset.gdiv != null) { out.push({ id: '', rows: [r] }); continue; } // 이번 여행 구분선
     const last = out[out.length - 1];
     if (last?.id === r.dataset.gid) last.rows.push(r); else out.push({ id: r.dataset.gid, rows: [r] });
   }
@@ -353,7 +369,7 @@ function gGroups() { // 화면에 있는 항목 순서 [{ id, rows }]
 }
 function gDragCat() { // 지금 자리에서 가질 분류
   const gs = gGroups(), k = gs.findIndex((g) => g.id === gDrag.id);
-  const prev = gs[k - 1] && gItem(gs[k - 1].id)?.cat, next = gs[k + 1] && gItem(gs[k + 1].id)?.cat;
+  const prev = gs[k - 1] && gItem(gs[k - 1].id)?.cat, next = gs[k + 1] && gItem(gs[k + 1].id)?.cat; // 구분선 너머는 이웃으로 보지 않음
   const own = gDrag.cat0;
   if (prev === own || next === own || (!prev && !next)) return own;
   return prev ?? next;
@@ -404,11 +420,12 @@ function gDragEnd(e) {
   cancelAnimationFrame(d.raf);
   document.body.classList.remove('g-dragging');
   d.rows.forEach((r) => r.classList.remove('g-drag'));
-  const order = gGroups().map((g) => gItem(g.id)).filter(Boolean);
-  const it = gItem(d.id);
-  const moved = order.some((x, i) => x !== sortedItems()[i]) || (it && it.cat !== d.cat);
+  const gs = gGroups(), cut = gs.findIndex((g) => !g.id);
+  const order = gs.map((g) => gItem(g.id)).filter(Boolean);
+  const it = gItem(d.id), trip = cut >= 0 && gs.findIndex((g) => g.id === d.id) < cut;
+  const moved = order.some((x, i) => x !== sortedItems()[i]) || (it && (it.cat !== d.cat || !!it.trip !== trip));
   if (!moved) return;
-  if (it) it.cat = d.cat;
+  if (it) { it.cat = d.cat; it.trip = trip; }
   G.items = order.concat(G.items.filter((x) => !order.includes(x)));
   saveGear(); renderGear();
 }

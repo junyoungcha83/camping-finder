@@ -193,4 +193,6 @@ table.tbl.gear { min-width: 0; font-size: .88rem; }
 .tbl.gear tr.g-drag:not(.g-r1) td, .tbl.gear:not(.edit) tr.g-drag td { box-shadow: inset 0 -2px 0 var(--pri); }
 .tbl.gear:not(.edit) tr.g-drag td { box-shadow: inset 0 2px 0 var(--pri), inset 0 -2px 0 var(--pri); }
 body.g-dragging, body.g-dragging * { cursor: grabbing !important; user-select: none; -webkit-user-select: none; }
+.tbl.gear tr.g-div td { padding: .5rem 0 .3rem; background: #fff; border-bottom: 0; }
+.tbl.gear tr.g-div span { display: block; border-top: 4px solid #222; padding-top: .2rem; text-align: center; font-size: .72rem; font-weight: 700; color: #222; }
 .gear-sync { font-size: .76rem; color: var(--sub); padding: .35rem .8rem 0; }
