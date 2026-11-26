@@ -171,7 +171,7 @@ table.tbl.gear { min-width: 0; font-size: .88rem; }
 .tbl.gear .g-nm { font-weight: 600; }
 .tbl.gear .g-nm span { margin-right: .3rem; }
 .tbl.gear input:not([type=checkbox]), .tbl.gear select { width: 100%; border: 1px solid var(--line); border-radius: .4rem; padding: .3rem .35rem; background: #fff; font-size: .85rem; }
-.tbl.gear.edit .g-cat { width: 6.2rem; }
+.tbl.gear.edit .g-cat { width: 7rem; }
 .tbl.gear.edit .g-qty { width: 3.6rem; }
 .tbl.gear.edit .g-ck { vertical-align: top; padding-top: .55rem; }
 .tbl.gear.edit .g-nm { min-width: 7rem; }

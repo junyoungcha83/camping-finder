@@ -9,19 +9,38 @@
  * 평소: 첫 열 체크 → 그 행이 회색. ✏️ 수정 누르면 추가·삭제·내용 수정·그림 추가/삭제.
  */
 
-const GEAR_CATS = ['텐트', '침구류', '주방류', '음식', '난방류', '전자', '놀이', '옷/세면'];
-const GEAR_SEED = [
-  ['텐트', '텐트', 1, ''], ['텐트', '타프', 1, ''], ['텐트', '팩·망치', 1, ''], ['텐트', '그라운드시트', 1, ''],
-  ['침구류', '침낭', 4, ''], ['침구류', '매트', 4, ''], ['침구류', '베개', 4, ''],
-  ['주방류', '버너·가스', 1, ''], ['주방류', '코펠·냄비', 1, ''], ['주방류', '수저·컵', 4, ''], ['주방류', '아이스박스', 1, ''],
-  ['음식', '물', 1, ''], ['음식', '고기·반찬', 1, ''],
-  ['난방류', '화로대', 1, ''], ['난방류', '난로', 1, '겨울'],
-  ['전자', '랜턴', 2, ''], ['전자', '릴선(전기)', 1, ''], ['전자', '보조배터리', 1, ''],
-  ['놀이', '보드게임', 1, ''],
-  ['옷/세면', '여벌옷', 4, ''], ['옷/세면', '세면도구', 1, ''], ['옷/세면', '수건', 4, ''],
-];
-
 const gid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const GEAR_CATS = ['텐트/기본류', '침구류', '주방류', '옷/세면', '전기류', '상비약', '놀이', '기타'];
+const GEAR_SEED_V = 2; // 기본 목록 판 — 올리면 손대지 않은 옛 기본 항목을 새 목록으로 바꾼다
+const GEAR_SEED = [
+  ['텐트/기본류', '텐트 (그라운드시트 포함)'], ['텐트/기본류', '타프 / 쉘터'], ['텐트/기본류', '팩 / 망치'], ['텐트/기본류', '랜턴걸이 / 폴대'],
+  ['텐트/기본류', '의자'], ['텐트/기본류', '테이블'], ['텐트/기본류', '방수포'],
+  ['침구류', '침낭'], ['침구류', '에어매트 / 매트리스 / 야전침대'], ['침구류', '베개'], ['침구류', '이불 / 담요'], ['침구류', '담요커버 / 매트커버'],
+  ['주방류', '버너 / 강염버너'], ['주방류', '그릴'], ['주방류', '가스(부탄/프로판)'], ['주방류', '코펠 / 냄비 / 프라이팬'], ['주방류', '주전자'],
+  ['주방류', '도마 / 칼 / 가위 / 집게'], ['주방류', '라이터 / 성냥'], ['주방류', '접시 / 컵 / 수저'], ['주방류', '식탁 매트 / 테이블보'],
+  ['주방류', '보냉백 / 아이스박스'], ['주방류', '생수 / 물통'], ['주방류', '키친타올 / 행주'], ['주방류', '수세미 / 세제'],
+  ['주방류', '물티슈 / 일반티슈'], ['주방류', '쓰레기봉투'],
+  ['옷/세면', '여벌 옷 / 속옷'], ['옷/세면', '수건'], ['옷/세면', '세면도구 (칫솔, 치약)'], ['옷/세면', '슬리퍼 / 샌들'], ['옷/세면', '선크림 / 립밤'],
+  ['옷/세면', '캠핑용 건조대'], ['옷/세면', '빨래집게'],
+  ['전기류', '랜턴 (메인, 테이블, 휴대용)'], ['전기류', '건전지 / 충전기'], ['전기류', '전기릴선 / 멀티탭'], ['전기류', '헤드랜턴'],
+  ['상비약', '구급약 / 상비약'], ['상비약', '벌레퇴치제 / 모기향 / 버물리'], ['상비약', '반창고'],
+  ['놀이', '배드민턴 / 공'], ['놀이', '보드게임 / 카드게임'], ['놀이', '아이들 장난감 / 책'], ['놀이', '자전거 (가능 시)'],
+  ['기타', '온열패드 (계절용)'], ['기타', '우비 / 우산'], ['기타', '캠핑용 가방 / 캐리어'],
+];
+// 1판 기본 목록(손대지 않은 항목을 알아보는 데만 쓴다)과 옛 분류 → 새 분류
+const GEAR_SEED_V1 = new Set(['텐트|텐트', '텐트|타프', '텐트|팩·망치', '텐트|그라운드시트', '침구류|침낭', '침구류|매트', '침구류|베개',
+  '주방류|버너·가스', '주방류|코펠·냄비', '주방류|수저·컵', '주방류|아이스박스', '음식|물', '음식|고기·반찬', '난방류|화로대', '난방류|난로',
+  '전자|랜턴', '전자|릴선(전기)', '전자|보조배터리', '놀이|보드게임', '옷/세면|여벌옷', '옷/세면|세면도구', '옷/세면|수건']);
+const GEAR_CAT_OLD = { '텐트': '텐트/기본류', '음식': '주방류', '난방류': '기타', '전자': '전기류' };
+const seedItems = () => GEAR_SEED.map(([cat, name]) => ({ id: gid(), cat, name, qty: 1, note: '', imgs: [], done: false }));
+// 옛 분류를 새 분류로 옮기고, 옛 기본 목록 그대로인 항목은 새 기본 목록으로 바꾼다(고친 항목·추가한 항목은 그대로 둔다)
+function migrateGear(items) {
+  const keep = items.filter((x) => !(GEAR_SEED_V1.has(`${x.cat}|${x.name}`) && !x.imgs.length && !x.note));
+  for (const x of keep) x.cat = GEAR_CAT_OLD[x.cat] || x.cat;
+  const have = new Set(keep.map((x) => x.name));
+  return [...keep, ...seedItems().filter((x) => !have.has(x.name))];
+}
+
 let G = loadGear();
 let gearEdit = false;
 
@@ -29,13 +48,19 @@ function loadGear() {
   try {
     const v = JSON.parse(localStorage.getItem('camp-gear') || 'null');
     if (v && Array.isArray(v.items)) {
+      if ((v.seedV || 1) < GEAR_SEED_V) { // 새 기본 목록 반영
+        v.seedV = GEAR_SEED_V;
+        if (v.fresh) v.items = seedItems();
+        else { v.items = migrateGear(v.items); v.dirty = true; v.editAt = Date.now(); }
+        try { localStorage.setItem('camp-gear', JSON.stringify(v)); } catch {}
+      }
       if (v.rev == null) { // 동기화 전 버전에서 고친 목록 — 올릴 대상
         Object.assign(v, { rev: 0, dirty: true, editAt: Date.now(), fresh: false, upq: v.items.flatMap((x) => x.imgs), delq: [] });
       }
       return v;
     }
   } catch {}
-  return { items: GEAR_SEED.map(([cat, name, qty, note]) => ({ id: gid(), cat, name, qty, note, imgs: [], done: false })),
+  return { items: seedItems(), seedV: GEAR_SEED_V,
     rev: 0, dirty: false, editAt: 0, fresh: true, upq: [], delq: [] };
 }
 function storeGear() { try { localStorage.setItem('camp-gear', JSON.stringify(G)); } catch { toast('저장 공간이 부족해요'); } }
@@ -139,6 +164,7 @@ async function pushGear() {
 function adoptRemote(rm) {
   const keep = new Set(rm.items.flatMap((x) => x.imgs));
   for (const it of G.items) for (const im of it.imgs) if (!keep.has(im)) { dropURL(im); imgDel(im).catch(() => {}); } // 서버에서 지워진 사진 정리
+  for (const x of rm.items) x.cat = GEAR_CAT_OLD[x.cat] || x.cat;
   G.items = rm.items; G.rev = rm.rev; G.dirty = false; G.fresh = false; G.upq = []; G.delq = [];
   storeGear();
 }
